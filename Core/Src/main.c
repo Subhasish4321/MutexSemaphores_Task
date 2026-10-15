@@ -324,6 +324,11 @@ void SystemClock_Config(void)
 //}
 
 /* USER CODE BEGIN 4 */
+static void EmployeeDoWork(unsigned char xWorkTicketId)
+{
+	printf("Working on ticket ID: %s\n",&xWorkTicketId);
+	vTaskDelay(xWorkTicketId);
+}
 static void manager_task_handler(void *Parameters)
 {
 	unsigned int xWorkTicketID;
@@ -331,6 +336,14 @@ static void manager_task_handler(void *Parameters)
 
 	/* The Semaphore is created in an empty state meaning the semaphore must be first given by using the proper APi before it can be obtained by another task.*/
 	xSemaphoreGive(xWork);
+	/* Why the Employee actually gets to run (the queue, not the yield):
+	 * 1. Manager (prio 3) runs first; Employee (prio 1) is lower priority.
+	 * 2. Iter 1: queue is empty, so xQueueSend succeeds at once (queue now full, len 1).
+	 *    The give + taskYIELD() does NOT start the Employee: yield only switches to an
+	 *    equal/higher-priority task, so the Manager just keeps running.
+	 * 3. Iter 2: queue is already full, so xQueueSend(portMAX_DELAY) BLOCKS the Manager.
+	 * 4. Only now, with the Manager blocked, is the Employee the highest ready task -> it runs.
+	 * So the full queue (not the semaphore/yield) is what lets the Employee run. */
 
 	while(1)
 	{
@@ -345,8 +358,10 @@ static void manager_task_handler(void *Parameters)
 		}
 		else
 		{
+			/* Manager notifies the employee by giving the semaphore */
 			xSemaphoreGive(xWork);
-
+			/* yield only reaches equal/higher-priority tasks, so NOT the Employee here;
+			* the Employee runs later when the next xQueueSend blocks on the full queue */
 		    taskYIELD();
 		}
 
@@ -354,8 +369,29 @@ static void manager_task_handler(void *Parameters)
 }
 static void employee_task_handler(void *Parameters)
 {
+	unsigned char xWorkTicketId;
+	portBASE_TYPE xstatus;
+
 	while(1)
 	{
+        /* First employee tries to take the semaphore*/
+		xstatus = xSemaphoreTake(xWork, 0);
+        if(xstatus == pdPASS)
+        {
+        	/* If we are here that means semaphore take is successful and we need to get the ticket id from the work queue. */
+			xstatus = xQueueReceive(xWorkQueue, &xWorkTicketId, 0);
+
+			if(xstatus == pdPASS)
+			{
+				/* Employee may decode the xWorkTicketID in this function to do the work.*/
+				EmployeeDoWork(xWorkTicketId);
+			}
+			else
+			{
+				printf("Employee task queue is empty, an error occurred \n");
+
+			}
+        }
 
 	}
 }
